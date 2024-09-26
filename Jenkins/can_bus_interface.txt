@@ -1,0 +1,86 @@
+pipeline {
+    agent { label 'vulcan' }
+    triggers { pollSCM('*/5 * * * *') }
+    environment {
+        svnPath = 'https://svn:4430/svn/Product/branches/CAN_bus_interface'
+        buildDir = 'build'
+        addCmakeOpts="${ADDITIONAL_CMAKE_OPTS}"
+    }
+    stages {
+        stage('Cleanup') {
+            steps {
+                script {
+                    //echo "Clean up"
+                    sh "rm -fr ${buildDir}"
+                }
+            }
+        }
+        stage('Checkout') {
+            steps {
+                script {
+                    def scmVars = checkout(poll: true,
+                                changelog: false,
+                                scm: [$class: 'SubversionSCM',
+                                additionalCredentials: [[credentialsId: "${BUILD_CREDENTIALS_ID}", realm: '<https://svn:4430> Subversion Repository']],
+                                excludedCommitMessages: '', excludedRegions: '', excludedRevprop: '', excludedUsers: '',
+                                filterChangelog: false, ignoreDirPropChanges: false,
+                                includedRegions: '', 
+                                locations: [[cancelProcessOnExternalsFail: true, 
+                                            credentialsId: "${BUILD_CREDENTIALS_ID}", 
+                                            depthOption: 'infinity',
+                                            ignoreExternalsOption: false, 
+                                            local: '.',
+                                            remote: "${svnPath}"]], quietOperation: true, workspaceUpdater: [$class: 'UpdateUpdater']])
+                        //echo "Retrieved ${scmVars.SVN_REVISION}"
+                        // create variable imperatively (it MUST NOT have existed before !!!)
+                        env.svnRev = "${scmVars.SVN_REVISION}"
+                }
+            }
+        }
+        stage('CMake') {
+            steps {
+                script {
+                    sh "mkdir -p ${buildDir}"
+                    dir("${buildDir}") {
+                        sh "cmake ${addCmakeOpts} -DCMAKE_BUILD_TYPE=RELEASE .."
+                    }
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                script {
+                    dir("${buildDir}") {
+                        sh "make -j8"
+                    }
+                }
+            }
+        }
+        stage('Packaging') {
+            steps {
+                script {
+                    echo 'Building AppImage'
+                    dir("${buildDir}") {
+                        sh "make install DESTDIR=AppDir"
+                        sh "mkdir -p out"
+                        sh "cp `ls CAN_bus_interface*.AppImage` out/CAN_bus_interface"
+                        sh "cp -r ./CAN_bus_interface/Licenses  out"
+                        sh "tar -C out -cf CAN_bus_interface_${version}.tar ."
+                        archiveArtifacts(artifacts: "CAN_bus_interface_${version}.tar")
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            recordIssues(enabledForFailure: true, ignoreFailedBuilds: false, tools: [gcc()])
+        }
+        failure {
+            emailext body: '''${SCRIPT, template="groovy-html.template"}''',
+                mimeType: 'text/html',
+                subject: "[Jenkins] ${currentBuild.fullDisplayName} : ${currentBuild.currentResult}",
+                recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+        }
+    }
+}

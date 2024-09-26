@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=CAN_bus_interface
+Exec=CAN_bus_interface
+Icon=CanbusInterface
+Categories=Development;
